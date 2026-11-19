@@ -46,7 +46,24 @@ They're optional until a module needs them. Put them in `.env.local` (never comm
 | `npm run format`                     | Format the code with Prettier                         |
 | `npm run start-module`               | One-time setup after cloning a module branch          |
 | `npm run env:check`                  | List the variables in `.env.local`, values masked     |
+| `npm run eval`                       | Grade Ask Copper on the golden set (Module 5)         |
+| `npm run ci:secrets`                 | Copy the eval's keys into your repo's Actions secrets |
 | `npm run embed-docs`                 | Re-embed the PDFs in `public/docs/` after they change |
+
+## Pull requests and the golden-set eval (Module 5)
+
+`main` is protected: every change goes in through a pull request, and it can
+merge only when CI passes. CI (`.github/workflows/ci.yml`) runs lint,
+typecheck, the tests and the build on Linux, macOS and Windows, then the
+**golden-set eval**: Ask Copper answers every question in
+`evals/golden-set.json`, an AI judge grades each answer, and at least 80% must
+pass. Each run and its scores are kept in Langfuse (Datasets >
+`copper-golden-set`).
+
+CI needs four keys as Actions secrets. Put them in `.env.local`, then run
+`npm run ci:secrets` once (again whenever a key changes):
+`GOOGLE_GENERATIVE_AI_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`
+and `LANGFUSE_BASE_URL`.
 
 ## AI coding agents
 
