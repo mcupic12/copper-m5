@@ -7,6 +7,7 @@ import { appendFileSync, existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { isAiConfigured } from "@/lib/ai/call";
 import { defaultModel } from "@/lib/ai/models";
+import { modelKeyProblem } from "./key-check";
 import { isLangfuseConfigured } from "./langfuse";
 import { formatReport, runGoldenSet } from "./run";
 
@@ -40,6 +41,10 @@ describe("Golden-set eval", () => {
         missing,
         "Missing keys: add them to .env.local, then run npm run ci:secrets",
       ).toEqual([]);
+      expect(
+        await modelKeyProblem(),
+        "Google rejected GOOGLE_GENERATIVE_AI_API_KEY: fix it in .env.local, then run npm run ci:secrets",
+      ).toBeNull();
 
       const run = await runGoldenSet({
         runName: runName(),

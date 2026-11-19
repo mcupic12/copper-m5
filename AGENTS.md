@@ -10,7 +10,7 @@ Module 5 makes Ask Copper safe to ship:
 - Trace every AI call in Langfuse (observability): each agent, its tool calls, tokens, cost and time.
 - Evaluate Ask Copper on a golden set of questions with an AI judge, and keep the scores in Langfuse.
 - Compare one support agent that does everything with the two agents (Copper and the Refund agent): run the same golden set on both and compare them in Langfuse.
-The golden-set eval is `npm run eval` (`evals/`; the questions are in `evals/golden-set.json`). CI (`.github/workflows/ci.yml`) runs the checks and then the eval on every pull request into `main`. `main` is protected, so commit to a branch and open a pull request; never push to `main`. `npm run ci:secrets` copies the eval's keys from `.env.local` into the repo's Actions secrets.
+The golden-set eval is `npm run eval` (`evals/`; the questions are in `evals/golden-set.json`). CI (`.github/workflows/ci.yml`) runs the checks and then the eval on every pull request into `main`. `main` is protected, so commit to a branch and open a pull request; never push to `main`. `npm run ci:secrets` copies the eval's keys from `.env.local` into the repo's Actions secrets. `npm run langfuse:judge` sets up Langfuse's own LLM-as-a-Judge (`scripts/setup-langfuse-judge.mjs`), which grades every golden-set run in Langfuse.
 Use Langfuse for evals, tracing and monitoring. Don't add other eval or monitoring tools. The Langfuse keys are `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `LANGFUSE_BASE_URL` in `.env.local`. The AI judge uses Gemini through `lib/ai/call.ts`, like every other AI call.
 How the app fits together is in `docs/architecture.md`; add a section there when a module adds pages, tables or AI calls.
 

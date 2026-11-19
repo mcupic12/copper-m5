@@ -4,18 +4,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { askCopperOnce, type CopperAnswer } from "@/evals/ask";
 import { GOLDEN_SET, type GoldenItem } from "@/evals/golden-set";
 import { judgeAnswer } from "@/evals/judge";
+import { modelKeyProblem } from "@/evals/key-check";
 import { formatReport, runGoldenSet } from "@/evals/run";
 import { itemPassed, missingTools, summarize } from "@/evals/scoring";
+import { callText } from "@/lib/ai/call";
 import { TOOL_LABELS } from "@/lib/copper/assistant/progress";
 
-// The golden-set eval with its model calls mocked: Ask Copper and the judge
-// answer at once, so these tests check the eval itself, not the model.
-// `npm run eval` runs it for real.
+// The golden-set eval with its model calls mocked: Ask Copper, the judge and
+// the key check answer at once, so these tests check the eval itself, not
+// the model. `npm run eval` runs it for real.
 vi.mock("@/evals/ask", () => ({ askCopperOnce: vi.fn() }));
 vi.mock("@/evals/judge", () => ({ judgeAnswer: vi.fn() }));
+vi.mock("@/lib/ai/call", () => ({ callText: vi.fn() }));
 
 const ask = vi.mocked(askCopperOnce);
 const judge = vi.mocked(judgeAnswer);
+const call = vi.mocked(callText);
 const ITEMS = GOLDEN_SET.items;
 
 const golden = (question: string) =>
@@ -196,6 +200,34 @@ describe("Golden-set run (model calls mocked)", () => {
       expect.objectContaining({ question: first.question }),
     );
     expect(result.summary.passed).toBe(ITEMS.length - 1);
+  });
+});
+
+describe("Key check before the run", () => {
+  it("passes when Google answers", async () => {
+    call.mockResolvedValueOnce({} as never);
+    expect(await modelKeyProblem()).toBeNull();
+  });
+
+  it("names the problem when Google rejects the key", async () => {
+    call.mockRejectedValueOnce(
+      Object.assign(
+        new Error("API key not valid. Please pass a valid API key."),
+        {
+          isRetryable: false,
+        },
+      ),
+    );
+    expect(await modelKeyProblem()).toContain("API key not valid");
+  });
+
+  it("lets a rate limit through, since the run retries it", async () => {
+    call.mockRejectedValueOnce(
+      Object.assign(new Error("Retry failed"), {
+        lastError: { isRetryable: true },
+      }),
+    );
+    expect(await modelKeyProblem()).toBeNull();
   });
 });
 

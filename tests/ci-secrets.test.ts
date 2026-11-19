@@ -59,8 +59,8 @@ function run(env: string | null) {
 }
 
 describe("npm run ci:secrets", () => {
-  it("sets each eval key as an Actions secret on the origin repo", () => {
-    const { status, calls } = run(
+  it("sets each eval key as an Actions secret on the origin repo, without printing it", () => {
+    const { status, calls, output } = run(
       envFile({ ...KEYS, OTHER_KEY: "not-for-ci" }),
     );
     expect(status).toBe(0);
@@ -74,10 +74,6 @@ describe("npm run ci:secrets", () => {
       ]),
     );
     expect(calls.map((call) => call.input)).toEqual(Object.values(KEYS));
-  });
-
-  it("never prints a key", () => {
-    const { output } = run(envFile(KEYS));
     for (const value of Object.values(KEYS)) {
       expect(output).not.toContain(value);
     }

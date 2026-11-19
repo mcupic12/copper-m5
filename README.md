@@ -48,6 +48,7 @@ They're optional until a module needs them. Put them in `.env.local` (never comm
 | `npm run env:check`                  | List the variables in `.env.local`, values masked     |
 | `npm run eval`                       | Grade Ask Copper on the golden set (Module 5)         |
 | `npm run ci:secrets`                 | Copy the eval's keys into your repo's Actions secrets |
+| `npm run langfuse:judge`             | Set up Langfuse's LLM-as-a-Judge on the golden set    |
 | `npm run embed-docs`                 | Re-embed the PDFs in `public/docs/` after they change |
 
 ## Pull requests and the golden-set eval (Module 5)
@@ -59,6 +60,11 @@ typecheck, the tests and the build on Linux, macOS and Windows, then the
 `evals/golden-set.json`, an AI judge grades each answer, and at least 80% must
 pass. Each run and its scores are kept in Langfuse (Datasets >
 `copper-golden-set`).
+
+Langfuse also grades every run with its own **LLM-as-a-Judge** (the
+evaluator "Ask Copper correctness"). Set it up once: in Langfuse, add an LLM
+connection (Settings > LLM Connections > Google AI Studio, with your Google
+key), then run `npm run langfuse:judge`.
 
 CI needs four keys as Actions secrets. Put them in `.env.local`, then run
 `npm run ci:secrets` once (again whenever a key changes):
