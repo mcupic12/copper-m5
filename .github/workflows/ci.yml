@@ -1,8 +1,22 @@
 name: CI
 
+# Every pull request into main runs all the checks: lint, typecheck, the tests
+# and the build on Linux, macOS and Windows, then the golden-set eval. Branch
+# protection on main merges a pull request only when all of them pass.
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push to a pull request cancels its older run.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
@@ -23,3 +37,28 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  eval:
+    name: Golden-set eval
+    # Ask Copper answers every golden-set question and the AI judge grades the
+    # answers (npm run eval). It runs once the tests pass on every OS, for pull
+    # requests and manual runs; the run and its scores are kept in Langfuse.
+    needs: check
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run eval
+        env:
+          GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_BASE_URL: ${{ secrets.LANGFUSE_BASE_URL }}
+          EVAL_PR: ${{ github.event.pull_request.number }}
+          EVAL_SHA: ${{ github.event.pull_request.head.sha || github.sha }}

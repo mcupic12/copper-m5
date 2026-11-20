@@ -171,3 +171,45 @@ the tests and a golden-set evaluation with an AI judge run in GitHub Actions
 on every pull request, with `main` protected; every AI call is traced in
 Langfuse; and one support agent that does everything is compared with the two
 agents on the same golden set. Langfuse is the only eval and monitoring tool.
+
+## Module 5: every check before a merge into main
+
+**Summary:** A pull request into `main` merges only when CI passes: lint,
+typecheck, the tests and the build on Linux, macOS and Windows, then the
+golden-set eval. Ask Copper answers every golden-set question, an AI judge
+grades each answer against the expected one, and at least 80% must pass. Each
+run is a Langfuse experiment, so its traces and scores are kept and runs can
+be compared.
+
+| Piece | Where | What it does |
+|---|---|---|
+| Golden set | `evals/golden-set.json`, `evals/golden-set.ts` | 15 customer questions, each with what a correct answer says and the tools Copper should use (`"a\|b"`: either one). `"support": true` asks it on the Support page (limit $50, no refunds yet) |
+| The question | `evals/ask.ts` | `askCopperOnce()` runs the real `askCopper` (both agents, their tools) and returns the reply, the agent that wrote it and the tools used |
+| AI judge | `evals/judge.ts` | `judgeAnswer()`: Gemini through `callObject`, `{ module: 5, feature: "eval-judge" }`. Verdict `correct` (1), `partly_correct` (0.5) or `incorrect` (0), with a reason |
+| Scores | `evals/scoring.ts`, `evals/run.ts` | Per item `correctness` (the judge) and `right_tools` (code: every expected tool was used). An item passes with both at 1. Run score `pass_rate`. A model call that fails is retried after 20 s and 60 s (free keys' rate limits) |
+| Langfuse | `evals/langfuse.ts` | Keeps the golden set as the `copper-golden-set` dataset, and runs it as the experiment "Ask Copper golden set" (run name `pr-<number>-<commit>`), with Langfuse's own tracer |
+| Runner | `evals/golden-set.eval.ts`, `vitest.eval.config.mts` | `npm run eval`. Fails below `EVAL_MIN_PASS_RATE` (0.8). Skipped on a computer without a Google key; in CI a missing key fails it. Writes a results table to the Actions run page |
+| CI | `.github/workflows/ci.yml` | On pull requests into `main` (and pushes to `main`): the `check` jobs, then `Golden-set eval` once they pass. Keys come from Actions secrets |
+| Langfuse judge | `scripts/langfuse-connect.mjs`, `scripts/setup-langfuse-judge.mjs` | `npm run langfuse:connect` gives Langfuse the Google key from `.env.local` (its LLM connection, `google-ai-studio`). `npm run langfuse:judge` creates (or updates) Langfuse's own LLM-as-a-Judge: the evaluator "Ask Copper correctness" (Gemini through that connection; 0, 0.5 or 1 with reasoning) and a rule that runs it on every `copper-golden-set` run, once per question. A second, independent grade in Langfuse; the code judge still decides CI |
+| Keys | `scripts/set-ci-secrets.mjs` | `npm run ci:secrets` copies the four keys from `.env.local` into the repo's Actions secrets without printing them |
+| Branch protection | GitHub: Settings > Branches > `main` | Pull requests only; the three `check` jobs and `Golden-set eval` must pass; applies to admins too |
+
+**Data flow:** pull request → `check` on three OSes → `Golden-set eval` → for
+each question: `askCopper` → reply and tools → AI judge + tool check → scores →
+Langfuse (traces, scores, `pass_rate`) → pass rate ≥ 80% or the check fails →
+branch protection allows or blocks the merge.
+
+**Decisions and trade-offs:** The eval runs the real agents with the real
+model, so it catches prompt and tool regressions the mocked unit tests can't;
+the cost is a slower, non-deterministic check, so it gates on a pass rate
+rather than on every answer. The judge grades against a written expected
+answer instead of its own knowledge, since the company is fictional. The tool
+check is plain code: it doesn't need a model to see whether `search_docs` ran.
+The eval runs only after the tests pass, so a broken build doesn't spend model
+calls.
+
+**Risks and open questions:** The judge is also Gemini Flash-Lite and can be
+wrong; read its reasons in Langfuse before trusting a failure. Free Google keys
+allow few calls a minute, so the eval asks one question at a time
+(`EVAL_CONCURRENCY`). Pull requests from forks don't get the repo's secrets, so
+their eval fails.
