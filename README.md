@@ -72,6 +72,20 @@ CI needs four keys as Actions secrets. Put them in `.env.local`, then run
 `GOOGLE_GENERATIVE_AI_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`
 and `LANGFUSE_BASE_URL`.
 
+## Tracing every AI call in Langfuse (Module 5)
+
+With the Langfuse keys set, every Ask Copper turn shows up in Langfuse >
+Tracing as one **Ask Copper** trace: each agent (Copper, the Refund agent),
+each model call with its tokens, cost and time, and each tool call. For the
+live site, add the three `LANGFUSE_*` variables to your Vercel project's
+environment variables too. Without the keys nothing is traced and the app works
+the same.
+
+**Ask Copper says "Sorry, something went wrong" on your computer only?** If
+your antivirus scans HTTPS (Avast and AVG do), Node doesn't trust its
+certificate, so calls to Google and Langfuse fail. Start the app with Windows'
+certificates instead: in PowerShell, `$env:NODE_USE_SYSTEM_CA=1; npm run dev`.
+
 ## AI coding agents
 
 `CLAUDE.md` / `AGENTS.md` hold the rules for Claude Code and Codex. `.mcp.json`

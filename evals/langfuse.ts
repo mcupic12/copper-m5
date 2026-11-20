@@ -3,9 +3,7 @@
 // be compared. The SDK reads LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY and
 // LANGFUSE_BASE_URL from the environment.
 import { LangfuseClient } from "@langfuse/client";
-import { LangfuseSpanProcessor } from "@langfuse/otel";
-import { trace } from "@opentelemetry/api";
-import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+import { startTracing, stopTracing } from "@/lib/ai/tracing";
 import { datasetItemId, GOLDEN_SET, toExperimentItem } from "./golden-set";
 
 export function isLangfuseConfigured(): boolean {
@@ -16,21 +14,18 @@ export function isLangfuseConfigured(): boolean {
 }
 
 /** Connects to Langfuse and starts sending traces. Call `stop` when done so nothing is lost. */
-export function startLangfuse() {
-  // Registered globally: Langfuse's experiment runner sends each question's
-  // trace only when a global OpenTelemetry tracer is set up.
-  const provider = new NodeTracerProvider({
-    spanProcessors: [new LangfuseSpanProcessor()],
-  });
-  provider.register();
+export async function startLangfuse() {
+  // The app's tracing (lib/ai/tracing.ts): a global tracer, which Langfuse's
+  // experiment runner needs to send each question's trace, and the AI SDK
+  // integration, so every model and tool call shows up inside it.
+  await startTracing();
   const client = new LangfuseClient();
   return {
     client,
     async stop() {
       await client.flush();
-      await provider.shutdown();
+      await stopTracing();
       await client.shutdown();
-      trace.disable();
     },
   };
 }

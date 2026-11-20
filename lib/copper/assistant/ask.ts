@@ -9,18 +9,25 @@
 // talking. Copper can hand the conversation to the Refund agent, a second
 // agent with its own instructions and tools, and the Refund agent can hand it
 // back. The agent that ends the turn answers the next message too.
+// Module 5: each turn is one Langfuse trace, "Ask Copper", with each agent
+// inside it and that agent's model and tool calls under it (lib/ai/tracing.ts).
+import { propagateAttributes, startActiveObservation } from "@langfuse/tracing";
 import { hasToolCall, stepCountIs } from "ai";
+import { after } from "next/server";
 import { callStream, THOUGHT_SUMMARIES } from "@/lib/ai/call";
 import { createLive, type Live } from "@/lib/ai/live";
+import { flushTraces } from "@/lib/ai/tracing";
 import {
   COPPER_HANDOFF,
   COPPER_INSTRUCTIONS,
   REFUND_AGENT_INSTRUCTIONS,
 } from "@/lib/copper/assistant/instructions";
-import type {
-  Agent,
-  Progress,
-  ToolStep,
+import {
+  AGENT_NAMES,
+  type Agent,
+  type Progress,
+  type ToolStep,
+  toolCallsOf,
 } from "@/lib/copper/assistant/progress";
 import {
   copperTools,
@@ -190,34 +197,81 @@ export async function askCopper({
     return handoff;
   }
 
+  /** One agent's part of the turn, traced in Langfuse as that agent. */
+  const runAgent = (
+    agent: Agent,
+    stream: () => ReturnType<typeof callStream>,
+  ) =>
+    startActiveObservation(
+      AGENT_NAMES[agent],
+      async (span) => {
+        const handoff = await follow(agent, stream());
+        span.update({
+          output: handoff ? { handedTo: AGENT_NAMES[handoff] } : progress.reply,
+        });
+        return handoff;
+      },
+      { asType: "agent" },
+    );
+
+  // Once the reply has been sent, send this turn's trace to Langfuse, before
+  // a serverless function stops. Outside a request (the tests, the eval)
+  // there's no reply to wait for, and after() throws.
+  try {
+    after(flushTraces);
+  } catch {
+    // Not in a request: nothing to wait for.
+  }
+
   // Read the stream in the background, so the panel gets the first update now.
   void (async () => {
     try {
-      if (!useTools) {
-        // Without tools, send no instructions either: "always use your
-        // tools" with no tools makes the model answer with nothing.
-        await follow(
-          "copper",
-          callStream(
-            { module: 2, feature: "ask-copper" },
-            { messages, providerOptions: THOUGHT_SUMMARIES },
-          ),
-        );
-      } else {
-        let current = first;
-        for (let handoffs = 0; ; handoffs++) {
-          const next = await follow(
-            current,
-            agentCall(current, messages, desk),
-          );
-          if (!next || next === current || handoffs >= MAX_HANDOFFS) break;
-          progress.steps.push({ type: "handoff", from: current, to: next });
-          progress.agent = current = next;
-          progress.reply = "";
-          call++;
-          update(snapshot());
-        }
-      }
+      await propagateAttributes(
+        {
+          traceName: "Ask Copper",
+          tags: [desk ? "support-page" : "home-page"],
+        },
+        () =>
+          startActiveObservation("Ask Copper", async (turn) => {
+            turn.update({ input: messages.at(-1)?.content ?? "" });
+            if (!useTools) {
+              // Without tools, send no instructions either: "always use
+              // your tools" with no tools makes the model answer with nothing.
+              await runAgent("copper", () =>
+                callStream(
+                  { module: 2, feature: "ask-copper" },
+                  { messages, providerOptions: THOUGHT_SUMMARIES },
+                ),
+              );
+            } else {
+              let current = first;
+              for (let handoffs = 0; ; handoffs++) {
+                const agent = current;
+                const next = await runAgent(agent, () =>
+                  agentCall(agent, messages, desk),
+                );
+                if (!next || next === current || handoffs >= MAX_HANDOFFS)
+                  break;
+                progress.steps.push({
+                  type: "handoff",
+                  from: current,
+                  to: next,
+                });
+                progress.agent = current = next;
+                progress.reply = "";
+                call++;
+                update(snapshot());
+              }
+            }
+            turn.update({
+              output: progress.reply,
+              metadata: {
+                answeredBy: AGENT_NAMES[progress.agent ?? "copper"],
+                tools: toolCallsOf(progress).map((step) => step.name),
+              },
+            });
+          }),
+      );
       progress.status = "done";
       if (!progress.reply.trim()) progress.reply = SORRY;
     } catch {

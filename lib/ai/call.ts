@@ -12,7 +12,9 @@ import { costUsd } from "@/lib/ai/pricing";
 
 // Every model call in the app goes through this file, so each one is logged
 // with its tokens, cost and how long it took. The log goes to the terminal
-// running the app, as a line starting "[ai_calls]".
+// running the app, as a line starting "[ai_calls]". Module 5: with the
+// Langfuse keys set, each call is also traced in Langfuse (lib/ai/tracing.ts),
+// named after its feature.
 
 export class AiNotConfiguredError extends Error {
   constructor() {
@@ -111,10 +113,22 @@ async function tracked<T extends { usage: Usage }>(
   }
 }
 
+/**
+ * Names the call in Langfuse after its feature (Module 5). The calls are
+ * traced only when lib/ai/tracing.ts has started; otherwise this does nothing.
+ */
+const telemetryFor = (info: Pick<CallInfo, "feature">) => ({
+  functionId: info.feature,
+});
+
 /** Generates text. Example: callText({ module: 3, feature: "support-answer" }, { prompt }) */
 export async function callText(info: CallInfo, options: TextOptions) {
   return tracked(info, (model) =>
-    generateText({ ...options, model: languageModel(model) }),
+    generateText({
+      ...options,
+      model: languageModel(model),
+      telemetry: telemetryFor(info),
+    }),
   );
 }
 
@@ -129,6 +143,7 @@ export async function callObject<Schema extends z.ZodType>(
       ...rest,
       model: languageModel(model),
       output: Output.object({ schema }),
+      telemetry: telemetryFor(info),
     }),
   );
   // Spreading `rest` loses generateText's output type; Output.object has
@@ -165,6 +180,7 @@ export async function callEmbedMany(
       providerOptions: {
         google: { outputDimensionality: EMBEDDING_DIMENSIONS },
       },
+      telemetry: telemetryFor(info),
     });
     await log(true);
     return result;
@@ -190,6 +206,7 @@ export function callStream(info: CallInfo, options: StreamOptions) {
   return streamText({
     ...options,
     model: languageModel(model),
+    telemetry: telemetryFor(info),
     onFinish: ({ totalUsage }) => logCall(row(true, totalUsage)),
     onError: () => logCall(row(false)),
   });

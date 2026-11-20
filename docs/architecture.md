@@ -213,3 +213,38 @@ wrong; read its reasons in Langfuse before trusting a failure. Free Google keys
 allow few calls a minute, so the eval asks one question at a time
 (`EVAL_CONCURRENCY`). Pull requests from forks don't get the repo's secrets, so
 their eval fails.
+
+## Module 5: tracing every AI call in Langfuse
+
+**Summary:** With the Langfuse keys set, every AI call is traced in Langfuse:
+each Ask Copper turn is one trace, "Ask Copper", with each agent inside it and
+that agent's model calls (tokens, cost, time) and tool calls under it. The
+golden-set eval uses the same tracing, so each eval question's trace shows the
+same detail. Without the keys nothing is sent and the app works the same.
+
+| Piece | Where | What it does |
+|---|---|---|
+| Start-up | `instrumentation.ts` | Next.js runs `register()` once when the server starts; on the Node.js runtime it calls `startTracing()` |
+| Tracing | `lib/ai/tracing.ts` | `startTracing()`: a global OpenTelemetry tracer that exports to Langfuse (`LangfuseSpanProcessor`, whose default filter skips Next.js's own spans), plus the AI SDK integration (`LangfuseVercelAiSdkIntegration`, registered with `registerTelemetry`). State lives on `globalThis`, because Next.js loads `instrumentation.ts` and the server actions as separate bundles. `flushTraces()`, `stopTracing()` |
+| Model calls | `lib/ai/call.ts` | Every call passes `telemetry: { functionId: feature }`, so each one is named after its feature (`ask-copper`, `refund-agent`, `search-docs`, `eval-judge`) |
+| One trace per turn | `lib/copper/assistant/ask.ts` | `propagateAttributes` names the trace "Ask Copper" and tags the page (`home-page`, `support-page`); `startActiveObservation` opens the turn (input: the question; output: the reply; metadata: who answered, the tools used) and one `agent` observation per agent. `after(flushTraces)` sends the trace once the reply has been sent, before a serverless function stops |
+| Eval | `evals/langfuse.ts` | Starts and stops the same tracing, so the experiment runner's traces include every model and tool call |
+
+**Data flow:** question → `askCopper` → trace "Ask Copper" → agent "Copper"
+→ AI SDK spans (`invoke_agent`, a `chat gemini-…` generation per step, tool
+calls, `search_docs` embeddings) → handoff → agent "Refund agent" → … → reply
+→ `after()` → `flushTraces()` → Langfuse. Langfuse prices each generation
+from its model table (Gemini 3.5 Flash-Lite: $0.30 input / $2.50 output per
+million tokens, the same as `lib/ai/pricing.ts`).
+
+**Decisions and trade-offs:** AI SDK 7 reports through telemetry integrations
+instead of OpenTelemetry directly, so the app uses Langfuse's AI SDK
+integration on top of one global tracer. The `[ai_calls]` log stays: it works
+with no Langfuse keys. The trace is flushed in `after()` rather than before the
+last update, so tracing never delays the reply.
+
+**Risks and open questions:** Traces hold the customer's questions and Copper's
+replies; a real company would mask personal data (`LangfuseSpanProcessor`'s
+`mask` option) and tell customers. On a laptop whose antivirus scans HTTPS,
+Node rejects the antivirus certificate unless started with
+`NODE_USE_SYSTEM_CA=1`.

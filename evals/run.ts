@@ -212,7 +212,7 @@ async function inLangfuse(options: RunOptions): Promise<GoldenRun> {
   const { task, evaluators } = evalSteps(
     options.retryDelaysMs ?? RETRY_DELAYS_MS,
   );
-  const langfuse = startLangfuse();
+  const langfuse = await startLangfuse();
   try {
     const data = await syncGoldenDataset(langfuse.client);
     const result = await langfuse.client.experiment.run<
