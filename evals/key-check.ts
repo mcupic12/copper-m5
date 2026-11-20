@@ -4,9 +4,18 @@
 // { module: 5, feature: "eval-key-check" }.
 import { callText } from "@/lib/ai/call";
 
+// A free key's daily limit (e.g. 500 requests a day per model) won't pass
+// during the run: it resets at midnight Pacific time.
+const DAILY_LIMIT = /per ?day/i;
+
 /** True for problems that may pass on their own (rate limits, server errors). */
 function mayPass(error: unknown): boolean {
-  const e = error as { isRetryable?: boolean; lastError?: unknown } | null;
+  const e = error as {
+    isRetryable?: boolean;
+    lastError?: unknown;
+    message?: string;
+  } | null;
+  if (DAILY_LIMIT.test(String(e?.message ?? ""))) return false;
   return (
     Boolean(e?.isRetryable) || (e?.lastError != null && mayPass(e.lastError))
   );

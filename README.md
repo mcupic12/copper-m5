@@ -72,6 +72,38 @@ CI needs four keys as Actions secrets. Put them in `.env.local`, then run
 `GOOGLE_GENERATIVE_AI_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`
 and `LANGFUSE_BASE_URL`.
 
+## Tracing every AI call in Langfuse (Module 5)
+
+With the Langfuse keys set, every Ask Copper turn shows up in Langfuse >
+Tracing as one **Ask Copper** trace: each agent (Copper, the Refund agent),
+each model call with its tokens, cost and time, and each tool call. For the
+live site, add the three `LANGFUSE_*` variables to your Vercel project's
+environment variables too. Without the keys nothing is traced and the app works
+the same.
+
+**Ask Copper says "Sorry, something went wrong" on your computer only?** If
+your antivirus scans HTTPS (Avast and AVG do), Node doesn't trust its
+certificate, so calls to Google and Langfuse fail. Start the app with Windows'
+certificates instead: in PowerShell, `$env:NODE_USE_SYSTEM_CA=1; npm run dev`.
+
+**Every turn ends in a reply.** After two document searches, or on its last
+step, an agent gets no tools, so it has to answer with what it found
+(`lib/copper/assistant/steps.ts`). Before this, Copper could search five times
+and never answer.
+
+## One support agent vs two (Module 5)
+
+To compare one support agent that does everything with Copper and the Refund
+agent, run the golden set on each. Both runs go to the same Langfuse dataset:
+
+- Two agents (the site): `npm run eval`
+- One agent: in PowerShell `$env:EVAL_AGENTS="one"; npm run eval` (macOS or
+  Linux: `EVAL_AGENTS=one npm run eval`)
+
+Then in Langfuse open Datasets > `copper-golden-set` > Runs, select both runs
+and compare their scores, cost and latency. The one-agent run's name ends in
+`-one-agent`. CI always grades the two agents.
+
 ## AI coding agents
 
 `CLAUDE.md` / `AGENTS.md` hold the rules for Claude Code and Codex. `.mcp.json`

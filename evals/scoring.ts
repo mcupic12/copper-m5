@@ -10,6 +10,16 @@ export const VERDICT_SCORES = {
 
 export type Verdict = keyof typeof VERDICT_SCORES;
 
+/** Which setup answers: the two agents (the site) or one that does everything. */
+export type Agents = "two" | "one";
+
+const HANDOFFS = new Set(["transfer_to_refund_agent", "transfer_to_copper"]);
+
+/** The tools an item expects. One agent has no one to hand off to. */
+export function expectedTools(tools: string[], agents: Agents): string[] {
+  return agents === "one" ? tools.filter((name) => !HANDOFFS.has(name)) : tools;
+}
+
 /** The expected tools the answer didn't use. "a|b" is met by either one. */
 export function missingTools(expected: string[], used: string[]): string[] {
   return expected.filter(

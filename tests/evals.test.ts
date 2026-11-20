@@ -1,23 +1,36 @@
 // @vitest-environment node
 import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { askCopperOnce, type CopperAnswer } from "@/evals/ask";
+import {
+  askCopperOnce,
+  askSupportAgentOnce,
+  type CopperAnswer,
+} from "@/evals/ask";
 import { GOLDEN_SET, type GoldenItem } from "@/evals/golden-set";
 import { judgeAnswer } from "@/evals/judge";
 import { modelKeyProblem } from "@/evals/key-check";
 import { formatReport, runGoldenSet } from "@/evals/run";
-import { itemPassed, missingTools, summarize } from "@/evals/scoring";
+import {
+  expectedTools as toolsFor,
+  itemPassed,
+  missingTools,
+  summarize,
+} from "@/evals/scoring";
 import { callText } from "@/lib/ai/call";
 import { TOOL_LABELS } from "@/lib/copper/assistant/progress";
 
 // The golden-set eval with its model calls mocked: Ask Copper, the judge and
 // the key check answer at once, so these tests check the eval itself, not
 // the model. `npm run eval` runs it for real.
-vi.mock("@/evals/ask", () => ({ askCopperOnce: vi.fn() }));
+vi.mock("@/evals/ask", () => ({
+  askCopperOnce: vi.fn(),
+  askSupportAgentOnce: vi.fn(),
+}));
 vi.mock("@/evals/judge", () => ({ judgeAnswer: vi.fn() }));
 vi.mock("@/lib/ai/call", () => ({ callText: vi.fn() }));
 
 const ask = vi.mocked(askCopperOnce);
+const askSupport = vi.mocked(askSupportAgentOnce);
 const judge = vi.mocked(judgeAnswer);
 const call = vi.mocked(callText);
 const ITEMS = GOLDEN_SET.items;
@@ -203,6 +216,36 @@ describe("Golden-set run (model calls mocked)", () => {
   });
 });
 
+describe("One support agent vs the two agents (Module 5)", () => {
+  it("doesn't expect handoffs from one agent, which has no one to hand off to", () => {
+    const refund = ["transfer_to_refund_agent", "request_refund"];
+    expect(toolsFor(refund, "one")).toEqual(["request_refund"]);
+    expect(toolsFor(refund, "two")).toEqual(refund);
+  });
+
+  it("asks the one support agent instead, and grades it on the same golden set", async () => {
+    askSupport.mockReset();
+    askSupport.mockImplementation(async ({ question }) => ({
+      reply: `An answer to: ${question}`,
+      agent: "support",
+      status: "done",
+      tools: toolsFor(golden(question).tools, "one").map(
+        (entry) => entry.split("|")[0],
+      ),
+    }));
+
+    const result = await runGoldenSet({
+      runName: "test-one-agent",
+      langfuse: false,
+      agents: "one",
+      retryDelaysMs: [],
+    });
+    expect(askSupport).toHaveBeenCalledTimes(ITEMS.length);
+    expect(ask).not.toHaveBeenCalled();
+    expect(result.summary.passRate).toBe(1);
+  });
+});
+
 describe("Key check before the run", () => {
   it("passes when Google answers", async () => {
     call.mockResolvedValueOnce({} as never);
@@ -228,6 +271,18 @@ describe("Key check before the run", () => {
       }),
     );
     expect(await modelKeyProblem()).toBeNull();
+  });
+
+  it("stops at a used-up daily limit, which won't pass during the run", async () => {
+    call.mockRejectedValueOnce(
+      Object.assign(
+        new Error(
+          "Failed after 3 attempts. Last error: You exceeded your current quota. Generate content requests per day limit exceeded",
+        ),
+        { lastError: { isRetryable: true } },
+      ),
+    );
+    expect(await modelKeyProblem()).toContain("per day limit exceeded");
   });
 });
 
