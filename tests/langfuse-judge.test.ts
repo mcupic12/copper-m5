@@ -7,6 +7,11 @@ import {
   setupLangfuseJudge,
   VARIABLE_MAPPING,
 } from "../scripts/setup-langfuse-judge.mjs";
+import {
+  connectGoogle,
+  JUDGE_MODELS,
+  PROVIDER,
+} from "../scripts/langfuse-connect.mjs";
 
 type Named = { id: string; name: string };
 type FakeOptions = {
@@ -125,15 +130,46 @@ describe("npm run langfuse:judge", () => {
     expect(client.api.evaluationRules.update.mock.calls[0][0]).toBe("rule-1");
   });
 
-  it("says to add an LLM connection in Langfuse first", async () => {
+  it("says to connect Langfuse to Google first", async () => {
     await expect(
       setupLangfuseJudge(fakeLangfuse({ connections: [] }), quiet),
-    ).rejects.toThrow(/LLM Connections/);
+    ).rejects.toThrow(/npm run langfuse:connect/);
   });
 
   it("says to run the eval first when the dataset doesn't exist yet", async () => {
     await expect(
       setupLangfuseJudge(fakeLangfuse({ dataset: null }), quiet),
     ).rejects.toThrow(/npm run eval/);
+  });
+});
+
+describe("npm run langfuse:connect", () => {
+  it("gives Langfuse the Google key as a Google AI Studio connection, without printing it", async () => {
+    const upsert = vi.fn(async (body: Record<string, unknown>) => body);
+    const lines: string[] = [];
+    await connectGoogle(
+      { api: { llmConnections: { upsert } } },
+      "AQ.test-key",
+      {
+        log: (line: string) => lines.push(line),
+      },
+    );
+    expect(upsert).toHaveBeenCalledWith({
+      provider: PROVIDER,
+      adapter: "google-ai-studio",
+      secretKey: "AQ.test-key",
+      customModels: JUDGE_MODELS,
+      withDefaultModels: true,
+    });
+    expect(JUDGE_MODELS).toContain("gemini-3.5-flash-lite");
+    expect(lines.join("\n")).not.toContain("AQ.test-key");
+  });
+
+  it("says to add the Google key to .env.local first", async () => {
+    const upsert = vi.fn();
+    await expect(
+      connectGoogle({ api: { llmConnections: { upsert } } }, "", quiet),
+    ).rejects.toThrow(/\.env\.local/);
+    expect(upsert).not.toHaveBeenCalled();
   });
 });

@@ -17,6 +17,7 @@
     "start-module": "node scripts/start-module.mjs",
     "env:check": "node scripts/check-env.mjs",
     "ci:secrets": "node scripts/set-ci-secrets.mjs",
+    "langfuse:connect": "node scripts/langfuse-connect.mjs",
     "langfuse:judge": "node scripts/setup-langfuse-judge.mjs",
     "embed-docs": "node scripts/embed-docs.mjs"
   },

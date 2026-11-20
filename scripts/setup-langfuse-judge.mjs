@@ -64,7 +64,7 @@ export async function setupLangfuseJudge(
     connections[0];
   if (!connection) {
     throw new Error(
-      "Langfuse has no LLM connection yet. In Langfuse: Settings > LLM Connections > Add LLM connection > Google AI Studio, paste your Google key, save. Then run npm run langfuse:judge again.",
+      "Langfuse has no LLM connection yet: run npm run langfuse:connect (it gives Langfuse your Google key from .env.local), then npm run langfuse:judge again.",
     );
   }
 
