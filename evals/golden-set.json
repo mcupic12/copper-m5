@@ -53,7 +53,7 @@
     {
       "id": "plus-annual-refund",
       "question": "If I cancel my annual Copper Plus plan, do I get my money back?",
-      "expected": "Only if you cancel within 14 days of purchase: then it's a full refund. After 14 days, the annual plan isn't refunded. Copper answers this policy question itself from the documents; it doesn't start a refund.",
+      "expected": "Only if you cancel within 14 days of purchase: then it's a full refund. After 14 days, the annual plan isn't refunded. It must not start a refund for an order: this is a question about the policy.",
       "tools": ["search_docs"],
       "support": true
     },

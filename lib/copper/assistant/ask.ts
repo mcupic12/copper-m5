@@ -12,7 +12,6 @@
 // Module 5: each turn is one Langfuse trace, "Ask Copper", with each agent
 // inside it and that agent's model and tool calls under it (lib/ai/tracing.ts).
 import { propagateAttributes, startActiveObservation } from "@langfuse/tracing";
-import { hasToolCall, stepCountIs } from "ai";
 import { after } from "next/server";
 import { callStream, THOUGHT_SUMMARIES } from "@/lib/ai/call";
 import { createLive, type Live } from "@/lib/ai/live";
@@ -29,6 +28,7 @@ import {
   type ToolStep,
   toolCallsOf,
 } from "@/lib/copper/assistant/progress";
+import { alwaysAnswer, STOP } from "@/lib/copper/assistant/steps";
 import {
   copperTools,
   refundAgentTools,
@@ -49,9 +49,6 @@ export type AskCopperRequest = {
 
 export type AskCopperResult = { progress: Live<Progress> };
 
-/** At most this many model steps (tool calls plus the reply) per agent. */
-const MAX_STEPS = 5;
-
 /** Copper → Refund agent → Copper at most, so a turn can't bounce forever. */
 const MAX_HANDOFFS = 2;
 
@@ -60,27 +57,27 @@ const HANDOFF_TOOLS: Record<string, Agent> = {
   transfer_to_copper: "copper",
 };
 
-// A handoff ends the agent's turn: the other agent answers.
-const STOP = [
-  stepCountIs(MAX_STEPS),
-  hasToolCall("transfer_to_refund_agent", "transfer_to_copper"),
-];
-
 const SORRY = "Sorry, something went wrong on my end. Please try again.";
 
 /** One agent's call: its instructions and only its own tools. */
 function agentCall(agent: Agent, messages: ChatMessage[], desk?: Desk) {
-  if (agent === "refund" && desk)
+  if (agent === "refund" && desk) {
+    const tools = refundAgentTools(desk);
     return callStream(
       { module: 4, feature: "refund-agent" },
       {
         messages,
         providerOptions: THOUGHT_SUMMARIES,
         instructions: REFUND_AGENT_INSTRUCTIONS,
-        tools: refundAgentTools(desk),
+        tools,
         stopWhen: STOP,
+        prepareStep: alwaysAnswer(),
       },
     );
+  }
+  const tools = desk
+    ? { ...copperTools, transfer_to_refund_agent: transferToRefundAgent }
+    : copperTools;
   return callStream(
     { module: 2, feature: "ask-copper" },
     {
@@ -89,10 +86,9 @@ function agentCall(agent: Agent, messages: ChatMessage[], desk?: Desk) {
       instructions: desk
         ? `${COPPER_INSTRUCTIONS}\n\n${COPPER_HANDOFF}`
         : COPPER_INSTRUCTIONS,
-      tools: desk
-        ? { ...copperTools, transfer_to_refund_agent: transferToRefundAgent }
-        : copperTools,
+      tools,
       stopWhen: STOP,
+      prepareStep: alwaysAnswer(),
     },
   );
 }

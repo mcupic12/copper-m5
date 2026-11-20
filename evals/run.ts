@@ -10,7 +10,7 @@ import type {
   ExperimentTask,
   RunEvaluator,
 } from "@langfuse/client";
-import { askCopperOnce, type CopperAnswer } from "./ask";
+import { askCopperOnce, askSupportAgentOnce, type CopperAnswer } from "./ask";
 import {
   GOLDEN_SET,
   type GoldenInput,
@@ -20,6 +20,8 @@ import {
 import { judgeAnswer } from "./judge";
 import { startLangfuse, syncGoldenDataset } from "./langfuse";
 import {
+  type Agents,
+  expectedTools,
   type ItemScores,
   itemPassed,
   missingTools,
@@ -43,6 +45,8 @@ export type RunOptions = {
   concurrency?: number;
   /** Keep the run, its traces and scores in Langfuse (needs its keys). */
   langfuse: boolean;
+  /** Ask the two agents (the site, the default) or the one support agent. */
+  agents?: Agents;
   retryDelaysMs?: number[];
 };
 
@@ -84,10 +88,11 @@ async function withRetries<T>(
 }
 
 /** The task (ask Copper) and the two item scores (judge, tool check). */
-function evalSteps(delays: number[]) {
+function evalSteps(delays: number[], agents: Agents) {
+  const ask = agents === "one" ? askSupportAgentOnce : askCopperOnce;
   const task: ExperimentTask<GoldenInput, string, GoldenMetadata> = (item) =>
     withRetries(
-      () => askCopperOnce(item.input as GoldenInput),
+      () => ask(item.input as GoldenInput),
       (answer) => answer.status === "error",
       delays,
     );
@@ -128,7 +133,7 @@ function evalSteps(delays: number[]) {
     metadata,
   }) => {
     const missing = missingTools(
-      metadata?.tools ?? [],
+      expectedTools(metadata?.tools ?? [], agents),
       (output as CopperAnswer).tools,
     );
     return {
@@ -211,6 +216,7 @@ const passRate: RunEvaluator<GoldenInput, string, GoldenMetadata> = async ({
 async function inLangfuse(options: RunOptions): Promise<GoldenRun> {
   const { task, evaluators } = evalSteps(
     options.retryDelaysMs ?? RETRY_DELAYS_MS,
+    options.agents ?? "two",
   );
   const langfuse = await startLangfuse();
   try {
@@ -223,7 +229,9 @@ async function inLangfuse(options: RunOptions): Promise<GoldenRun> {
       name: EXPERIMENT_NAME,
       runName: options.runName,
       description:
-        "Ask Copper (Copper and the Refund agent) on the golden set, graded by the AI judge.",
+        options.agents === "one"
+          ? "One support agent that does everything, on the golden set, graded by the AI judge."
+          : "Ask Copper (Copper and the Refund agent) on the golden set, graded by the AI judge.",
       metadata: options.metadata,
       data,
       task,
@@ -267,6 +275,7 @@ async function mapWithLimit<T, R>(
 async function onThisComputer(options: RunOptions): Promise<GoldenRun> {
   const { task, evaluators } = evalSteps(
     options.retryDelaysMs ?? RETRY_DELAYS_MS,
+    options.agents ?? "two",
   );
   const scored = await mapWithLimit(
     GOLDEN_SET.items,
