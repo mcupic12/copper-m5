@@ -213,3 +213,98 @@ wrong; read its reasons in Langfuse before trusting a failure. Free Google keys
 allow few calls a minute, so the eval asks one question at a time
 (`EVAL_CONCURRENCY`). Pull requests from forks don't get the repo's secrets, so
 their eval fails.
+
+## Module 5: tracing every AI call in Langfuse
+
+**Summary:** With the Langfuse keys set, every AI call is traced in Langfuse:
+each Ask Copper turn is one trace, "Ask Copper", with each agent inside it and
+that agent's model calls (tokens, cost, time) and tool calls under it. The
+golden-set eval uses the same tracing, so each eval question's trace shows the
+same detail. Without the keys nothing is sent and the app works the same.
+
+| Piece | Where | What it does |
+|---|---|---|
+| Start-up | `instrumentation.ts` | Next.js runs `register()` once when the server starts; on the Node.js runtime it calls `startTracing()` |
+| Tracing | `lib/ai/tracing.ts` | `startTracing()`: a global OpenTelemetry tracer that exports to Langfuse (`LangfuseSpanProcessor`, whose default filter skips Next.js's own spans), plus the AI SDK integration (`LangfuseVercelAiSdkIntegration`, registered with `registerTelemetry`). State lives on `globalThis`, because Next.js loads `instrumentation.ts` and the server actions as separate bundles. `flushTraces()`, `stopTracing()` |
+| Model calls | `lib/ai/call.ts` | Every call passes `telemetry: { functionId: feature }`, so each one is named after its feature (`ask-copper`, `refund-agent`, `search-docs`, `eval-judge`) |
+| One trace per turn | `lib/copper/assistant/ask.ts` | `propagateAttributes` names the trace "Ask Copper" and tags the page (`home-page`, `support-page`); `startActiveObservation` opens the turn (input: the question; output: the reply; metadata: who answered, the tools used) and one `agent` observation per agent. `after(flushTraces)` sends the trace once the reply has been sent, before a serverless function stops |
+| Eval | `evals/langfuse.ts` | Starts and stops the same tracing, so the experiment runner's traces include every model and tool call |
+
+**Data flow:** question → `askCopper` → trace "Ask Copper" → agent "Copper"
+→ AI SDK spans (`invoke_agent`, a `chat gemini-…` generation per step, tool
+calls, `search_docs` embeddings) → handoff → agent "Refund agent" → … → reply
+→ `after()` → `flushTraces()` → Langfuse. Langfuse prices each generation
+from its model table (Gemini 3.5 Flash-Lite: $0.30 input / $2.50 output per
+million tokens, the same as `lib/ai/pricing.ts`).
+
+**Decisions and trade-offs:** AI SDK 7 reports through telemetry integrations
+instead of OpenTelemetry directly, so the app uses Langfuse's AI SDK
+integration on top of one global tracer. The `[ai_calls]` log stays: it works
+with no Langfuse keys. The trace is flushed in `after()` rather than before the
+last update, so tracing never delays the reply.
+
+**Risks and open questions:** Traces hold the customer's questions and Copper's
+replies; a real company would mask personal data (`LangfuseSpanProcessor`'s
+`mask` option) and tell customers. On a laptop whose antivirus scans HTTPS,
+Node rejects the antivirus certificate unless started with
+`NODE_USE_SYSTEM_CA=1`.
+
+## Module 5: every turn ends in a reply
+
+**Summary:** The traces showed Copper calling `search_docs` five times for a
+question the documents don't answer ("Is Copper Home waterproof?"), hitting the
+step limit and never replying: 12.7 s, twice the average cost, and "Sorry,
+something went wrong" for the customer. Now, after two searches or on the last
+step allowed, the agent gets no tools, so it has to answer with what it found.
+
+| Piece | Where | What it does |
+|---|---|---|
+| Step rules | `lib/copper/assistant/steps.ts` | `MAX_STEPS` (5), `MAX_SEARCHES` (2), `STOP` (the step limit or a handoff), and `alwaysAnswer()`: a `prepareStep` that sets `toolChoice: "none"` after two searches or on the last step. Out of `ask.ts`, which as a `"use server"` file may export only async functions |
+| Both agents | `lib/copper/assistant/ask.ts` | Copper's and the Refund agent's calls pass `prepareStep: alwaysAnswer()` |
+| Instructions | `lib/copper/assistant/instructions.ts` | "Search at most twice for one question", so the model plans for it |
+
+**Decisions and trade-offs:** The rule is code, not instructions, like the
+refund rule. Offering every tool except `search_docs` wasn't enough: Gemini
+still tried a third search, and the chat showed the customer an
+`AI_NoSuchToolError`. With no tools at all, it can only write. The cost: a
+question that really needs a third search, or a search and then two more tools,
+gets answered from what the agent has after two searches.
+
+## Module 5: one support agent vs two
+
+**Summary:** One support agent that does everything (Copper's tools plus
+`get_orders` and `request_refund`, Copper's instructions plus the refund rules,
+no handoffs) is graded on the same golden set as the site's two agents, and
+both runs are compared in Langfuse. Only the eval uses the one agent.
+
+| Piece | Where | What it does |
+|---|---|---|
+| The one agent | `lib/copper/assistant/support-agent.ts` | `askSupportAgent()`: one `callStream` with `supportAgentTools(desk)`, `SUPPORT_AGENT_INSTRUCTIONS`, the same `STOP` and `alwaysAnswer()`. AI call `{ module: 5, feature: "support-agent" }`; traced as the agent "Support agent" |
+| Eval | `evals/ask.ts`, `evals/run.ts`, `evals/golden-set.eval.ts` | `EVAL_AGENTS=one` asks `askSupportAgentOnce` instead of `askCopperOnce`; the run name ends in `-one-agent` and its metadata says which agents answered |
+| Tool check | `evals/scoring.ts` | `expectedTools(tools, "one")` drops the handoff tools, since one agent has no one to hand off to |
+
+**Data flow:** `EVAL_AGENTS=one npm run eval` → each golden question → one
+"Support agent" trace (model calls, tool calls) → AI judge + tool check →
+Langfuse run `…-one-agent` on `copper-golden-set` → compare it with a two-agent
+run under Datasets > `copper-golden-set` > Runs.
+
+**Results (2026-11-20, Gemini 3.5 Flash-Lite, same 15 questions and judges;
+runs `local-2026-11-20-23-03` and `local-2026-11-20-23-06-one-agent`):**
+
+| | Two agents (the site) | One support agent |
+|---|---|---|
+| Passed | 15/15 (100%) | 14/15 (93%): the $7.99 refund answer left out the order and the limit |
+| Average judge score | 1.00 | 0.97 |
+| Right tools | 100% | 100% |
+| Cost per question | $0.0020 | $0.0022 (+10%) |
+| Median / mean time per question | 2.4 s / 3.1 s | 2.7 s / 2.9 s |
+| Refund questions | 4.2 s on average (handoff) | 2.5 s (no handoff) |
+| Simple product questions | about 2.0 s | about 2.6 s |
+
+**Decisions and trade-offs:** The site keeps the two agents. They answered
+refunds more completely, cost less overall, and keep `request_refund` away from
+the agent that talks to every customer. One agent saves the handoff, so refunds
+are faster, but every call carries longer instructions and all seven tools
+(about 30% more input tokens), so simple questions are slower and every
+question costs more. Fifteen questions is a small sample: one answer is the
+whole quality difference.
